@@ -1,10 +1,12 @@
 package release
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 )
 
@@ -25,6 +27,10 @@ func (w *Workspace) Init(version string) error {
 }
 
 func (w *Workspace) New(version string) error {
+	return w.startNew(version, true)
+}
+
+func (w *Workspace) startNew(version string, openPR bool) error {
 	if err := ensureClean(w.Root); err != nil {
 		return err
 	}
@@ -36,7 +42,7 @@ func (w *Workspace) New(version string) error {
 	if err != nil {
 		return err
 	}
-	branch := fmt.Sprintf("release/v%s", version)
+	branch := releaseBranchName(version)
 	if err := createBranch(w.Root, branch); err != nil {
 		return err
 	}
@@ -46,7 +52,13 @@ func (w *Workspace) New(version string) error {
 	if err := commitAll(w.Root, fmt.Sprintf("chore(release): start %s", version)); err != nil {
 		return err
 	}
-	return nil
+	if err := pushBranch(w.Root, branch); err != nil {
+		return err
+	}
+	if !openPR {
+		return nil
+	}
+	return openPullRequest(w.Root, branch, "main", version, true)
 }
 
 func (w *Workspace) Advance(channel Channel) error {
@@ -61,6 +73,13 @@ func (w *Workspace) Advance(channel Channel) error {
 	if err != nil {
 		return err
 	}
+	branch := branchName(w.Root)
+	if !strings.HasPrefix(branch, "release/") {
+		branch = releaseBranchName(state.BaseVersion)
+		if err := createBranch(w.Root, branch); err != nil {
+			return err
+		}
+	}
 	if err := Save(StateFile(w.Root), next); err != nil {
 		return err
 	}
@@ -71,7 +90,10 @@ func (w *Workspace) Advance(channel Channel) error {
 	if err := commitAll(w.Root, fmt.Sprintf("chore(release): %s", version)); err != nil {
 		return err
 	}
-	return nil
+	if err := pushBranch(w.Root, branch); err != nil {
+		return err
+	}
+	return openPullRequest(w.Root, branch, "main", version, true)
 }
 
 func (w *Workspace) Finalize() error {
@@ -86,7 +108,21 @@ func (w *Workspace) Finalize() error {
 	if err != nil {
 		return err
 	}
-	if err := PromoteChangelog(w.Root, next.BaseVersion, nil); err != nil {
+	branch := branchName(w.Root)
+	if !strings.HasPrefix(branch, "release/") {
+		branch = releaseBranchName(state.BaseVersion)
+		if err := createBranch(w.Root, branch); err != nil {
+			return err
+		}
+	}
+	items, err := CollectStagedEntries(w.Root)
+	if err != nil {
+		return err
+	}
+	if err := PromoteChangelog(w.Root, next.BaseVersion, items); err != nil {
+		return err
+	}
+	if err := ClearStagedEntries(w.Root); err != nil {
 		return err
 	}
 	if err := Save(StateFile(w.Root), next); err != nil {
@@ -95,10 +131,10 @@ func (w *Workspace) Finalize() error {
 	if err := commitAll(w.Root, fmt.Sprintf("chore(release): finalize %s", next.BaseVersion)); err != nil {
 		return err
 	}
-	if err := openPullRequest(w.Root, branchName(w.Root), "main", next.BaseVersion); err != nil {
+	if err := pushBranch(w.Root, branch); err != nil {
 		return err
 	}
-	return nil
+	return openPullRequest(w.Root, branch, "main", next.BaseVersion, false)
 }
 
 func loadCurrent(root string) (State, error) {
@@ -123,18 +159,46 @@ func loadOrSeed(root, version string) (State, error) {
 	return Load(statePath)
 }
 
+func releaseBranchName(version string) string {
+	return fmt.Sprintf("release/v%s", version)
+}
+
 func ensureClean(root string) error {
 	if !isGitRepo(root) {
 		return nil
 	}
-	out, err := gitOutput(root, "status", "--porcelain")
+	out, err := gitOutput(root, "status", "--porcelain=v1", "--untracked-files=all")
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(out) != "" {
-		return errors.New("working tree is dirty; commit or stash changes before running release commands")
+	for _, rawLine := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+		if strings.TrimSpace(rawLine) == "" {
+			continue
+		}
+		path := releasePathFromStatus(rawLine)
+		if path == "" {
+			return errors.New("unable to parse git status output")
+		}
+		if !isControlledReleasePath(path) {
+			return errors.New("working tree has unrelated changes; commit or stash them before running release commands")
+		}
 	}
 	return nil
+}
+
+func releasePathFromStatus(line string) string {
+	if len(line) < 4 {
+		return ""
+	}
+	return strings.TrimSpace(line[3:])
+}
+
+func isControlledReleasePath(path string) bool {
+	switch path {
+	case "version.json", "CHANGELOG.md":
+		return true
+	}
+	return strings.HasPrefix(path, "changelogs/")
 }
 
 func isGitRepo(root string) bool {
@@ -154,10 +218,25 @@ func createBranch(root, branch string) error {
 	if branch == "" {
 		return errors.New("branch name is required")
 	}
+	if localBranchExists(root, branch) {
+		return gitRun(root, "switch", branch)
+	}
+	if remoteBranchExists(root, "origin", branch) {
+		if err := gitRun(root, "fetch", "origin", branch); err != nil {
+			return err
+		}
+		return gitRun(root, "switch", "--track", "-c", branch, "origin/"+branch)
+	}
 	if err := gitRun(root, "switch", "-c", branch); err != nil {
 		return err
 	}
 	return nil
+}
+
+func localBranchExists(root, branch string) bool {
+	cmd := exec.Command("git", "show-ref", "--verify", "--quiet", "refs/heads/"+branch)
+	cmd.Dir = root
+	return cmd.Run() == nil
 }
 
 func commitAll(root, message string) error {
@@ -167,7 +246,7 @@ func commitAll(root, message string) error {
 	if err := gitRun(root, "config", "user.email", "release@thisisckm.local"); err != nil {
 		return err
 	}
-	if err := gitRun(root, "add", "version.json", "CHANGELOG.md"); err != nil {
+	if err := gitRun(root, "add", "-A", "--", "version.json", "CHANGELOG.md", "changelogs"); err != nil {
 		return err
 	}
 	if err := gitRun(root, "commit", "-m", message); err != nil {
@@ -176,22 +255,123 @@ func commitAll(root, message string) error {
 	return nil
 }
 
-func openPullRequest(root, head, base, version string) error {
+func pushBranch(root, branch string) error {
+	if branch == "" {
+		return nil
+	}
+	remoteURL, err := gitOutput(root, "remote", "get-url", "origin")
+	if err != nil {
+		return nil
+	}
+	if !looksLikeGitHubRemote(strings.TrimSpace(remoteURL)) {
+		return nil
+	}
+	if err := gitRun(root, "push", "-u", "origin", branch); err != nil {
+		return err
+	}
+	return nil
+}
+
+func openPullRequest(root, head, base, version string, draft bool) error {
 	if head == "" || base == "" {
 		return nil
 	}
 	if !strings.HasPrefix(head, "release/") {
 		return nil
 	}
+	remoteURL, err := gitOutput(root, "remote", "get-url", "origin")
+	if err != nil {
+		return nil
+	}
+	if !looksLikeGitHubRemote(strings.TrimSpace(remoteURL)) {
+		return nil
+	}
+	if !remoteBranchExists(root, "origin", base) {
+		fmt.Printf("release branch prepared for %s; create or sync %s before opening a PR from %s\n", version, base, head)
+		return nil
+	}
 	if _, err := exec.LookPath("gh"); err != nil {
 		fmt.Printf("release branch prepared for %s; open a PR from %s into %s\n", version, head, base)
 		return nil
 	}
-	cmd := exec.Command("gh", "pr", "create", "--base", base, "--head", head, "--title", fmt.Sprintf("Release %s", version), "--body", fmt.Sprintf("Prepare release %s.", version))
+	title := releasePullRequestTitle(version)
+	body := releasePullRequestBody(root, version)
+	if number, err := existingPullRequestNumber(root, head, base); err != nil {
+		return err
+	} else if number > 0 {
+		return editPullRequest(root, number, title, body)
+	}
+	args := []string{"pr", "create", "--base", base, "--head", head, "--title", title, "--body", body}
+	if draft {
+		args = append(args, "--draft")
+	}
+	cmd := exec.Command("gh", args...)
+	cmd.Dir = root
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func existingPullRequestNumber(root, head, base string) (int, error) {
+	cmd := exec.Command("gh", "pr", "list", "--head", head, "--base", base, "--state", "open", "--json", "number", "--limit", "1")
+	cmd.Dir = root
+	out, err := cmd.Output()
+	if err != nil {
+		return 0, err
+	}
+	var prs []struct {
+		Number int `json:"number"`
+	}
+	if err := json.Unmarshal(out, &prs); err != nil {
+		return 0, err
+	}
+	if len(prs) == 0 {
+		return 0, nil
+	}
+	return prs[0].Number, nil
+}
+
+func editPullRequest(root string, number int, title, body string) error {
+	cmd := exec.Command("gh", "pr", "edit", strconv.Itoa(number), "--title", title, "--body", body)
 	cmd.Dir = root
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+func releasePullRequestTitle(version string) string {
+	switch {
+	case strings.Contains(version, "-alpha."):
+		return fmt.Sprintf("Alpha Release %s", version)
+	case strings.Contains(version, "-beta."):
+		return fmt.Sprintf("Beta Release %s", version)
+	case strings.Contains(version, "-rc."):
+		return fmt.Sprintf("Release Candidate %s", version)
+	default:
+		return fmt.Sprintf("Stable Release %s", version)
+	}
+}
+
+func releasePullRequestBody(root, version string) string {
+	unreleased, err := UnreleasedChangelog(root)
+	if err != nil || strings.TrimSpace(unreleased) == "" {
+		unreleased = "No unreleased changelog entries found."
+	}
+	return fmt.Sprintf("## Release\n%s\n\n## Changelog\n%s\n", version, strings.TrimSpace(unreleased))
+}
+
+func remoteBranchExists(root, remote, branch string) bool {
+	cmd := exec.Command("git", "ls-remote", "--heads", remote, branch)
+	cmd.Dir = root
+	out, err := cmd.Output()
+	return err == nil && strings.TrimSpace(string(out)) != ""
+}
+
+func looksLikeGitHubRemote(remote string) bool {
+	return strings.Contains(remote, "github.com")
 }
 
 func gitRun(root string, args ...string) error {
