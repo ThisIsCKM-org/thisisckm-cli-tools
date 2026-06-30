@@ -1,7 +1,9 @@
 package release
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -31,6 +33,63 @@ func TestNewCreatesDocumentedReleaseBranch(t *testing.T) {
 	}
 	if got, want := state.State, StateInProgress; got != want {
 		t.Fatalf("state = %s, want %s", got, want)
+	}
+}
+
+func TestAdvancePromotesStagedChangelogEntries(t *testing.T) {
+	root := setupGitReleaseRepo(t)
+	entryPath := filepath.Join(root, "changelogs", "2026-06-30-add-sub-helper.md")
+	entry := `### Added
+- Added a sub(float, float) helper.
+`
+	if err := os.WriteFile(entryPath, []byte(entry), 0o644); err != nil {
+		t.Fatalf("write staged changelog entry: %v", err)
+	}
+	workspace := Workspace{Root: root}
+
+	if err := workspace.Advance(ChannelAlpha); err != nil {
+		t.Fatalf("alpha release: %v", err)
+	}
+	if got, want := currentGitBranch(t, root), "release/v0.1.0-alpha.1"; got != want {
+		t.Fatalf("branch = %q, want %q", got, want)
+	}
+	data, err := os.ReadFile(ChangelogFile(root))
+	if err != nil {
+		t.Fatalf("read changelog: %v", err)
+	}
+	got := string(data)
+	if !strings.Contains(got, "## [0.1.0-alpha.1] - ") {
+		t.Fatalf("alpha changelog heading missing: %q", got)
+	}
+	if !strings.Contains(got, "Added a sub(float, float) helper") {
+		t.Fatalf("staged changelog entry missing from changelog: %q", got)
+	}
+	if _, err := os.Stat(entryPath); !os.IsNotExist(err) {
+		t.Fatalf("staged changelog entry was not cleared, stat err: %v", err)
+	}
+}
+
+func TestAdvanceUsesComputedPrereleaseBranch(t *testing.T) {
+	root := setupGitReleaseRepo(t)
+	workspace := Workspace{Root: root}
+
+	if err := workspace.New("0.1.0"); err != nil {
+		t.Fatalf("new release: %v", err)
+	}
+	if got, want := currentGitBranch(t, root), "release/v0.1.0"; got != want {
+		t.Fatalf("branch after new = %q, want %q", got, want)
+	}
+	if err := workspace.Advance(ChannelAlpha); err != nil {
+		t.Fatalf("alpha release: %v", err)
+	}
+	if got, want := currentGitBranch(t, root), "release/v0.1.0-alpha.1"; got != want {
+		t.Fatalf("branch after alpha = %q, want %q", got, want)
+	}
+	if err := workspace.Advance(ChannelAlpha); err != nil {
+		t.Fatalf("second alpha release: %v", err)
+	}
+	if got, want := currentGitBranch(t, root), "release/v0.1.0-alpha.2"; got != want {
+		t.Fatalf("branch after alpha.2 = %q, want %q", got, want)
 	}
 }
 

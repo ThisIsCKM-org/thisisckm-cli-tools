@@ -73,18 +73,20 @@ func (w *Workspace) Advance(channel Channel) error {
 	if err != nil {
 		return err
 	}
-	branch := branchName(w.Root)
-	if !strings.HasPrefix(branch, "release/") {
-		branch = releaseBranchName(state.BaseVersion)
+	version, err := next.ReleaseVersion()
+	if err != nil {
+		return err
+	}
+	branch := releaseBranchName(version)
+	if branchName(w.Root) != branch {
 		if err := createBranch(w.Root, branch); err != nil {
 			return err
 		}
 	}
-	if err := Save(StateFile(w.Root), next); err != nil {
+	if err := promoteStagedChangelog(w.Root, version); err != nil {
 		return err
 	}
-	version, err := next.ReleaseVersion()
-	if err != nil {
+	if err := Save(StateFile(w.Root), next); err != nil {
 		return err
 	}
 	if err := commitAll(w.Root, fmt.Sprintf("chore(release): %s", version)); err != nil {
@@ -108,21 +110,13 @@ func (w *Workspace) Finalize() error {
 	if err != nil {
 		return err
 	}
-	branch := branchName(w.Root)
-	if !strings.HasPrefix(branch, "release/") {
-		branch = releaseBranchName(state.BaseVersion)
+	branch := releaseBranchName(next.BaseVersion)
+	if branchName(w.Root) != branch {
 		if err := createBranch(w.Root, branch); err != nil {
 			return err
 		}
 	}
-	items, err := CollectStagedEntries(w.Root)
-	if err != nil {
-		return err
-	}
-	if err := PromoteChangelog(w.Root, next.BaseVersion, items); err != nil {
-		return err
-	}
-	if err := ClearStagedEntries(w.Root); err != nil {
+	if err := promoteStagedChangelog(w.Root, next.BaseVersion); err != nil {
 		return err
 	}
 	if err := Save(StateFile(w.Root), next); err != nil {
@@ -157,6 +151,17 @@ func loadOrSeed(root, version string) (State, error) {
 		return State{}, err
 	}
 	return Load(statePath)
+}
+
+func promoteStagedChangelog(root, version string) error {
+	items, err := CollectStagedEntries(root)
+	if err != nil {
+		return err
+	}
+	if err := PromoteChangelog(root, version, items); err != nil {
+		return err
+	}
+	return ClearStagedEntries(root)
 }
 
 func releaseBranchName(version string) string {

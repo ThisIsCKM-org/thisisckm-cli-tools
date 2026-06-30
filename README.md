@@ -23,7 +23,7 @@ The first tool is the release CLI.
 ## Changelog
 
 - Store in-progress entries under `changelogs/` as one file per change log item.
-- Consolidate staged entries into `CHANGELOG.md` when a release is cut.
+- Consolidate staged entries into `CHANGELOG.md` whenever `alpha`, `beta`, `rc`, or `final` cuts a release version.
 - Keep `CHANGELOG.md` as the published release history.
 
 ## Release Flow
@@ -77,6 +77,8 @@ When `develop` is ready for the first prerelease, start the release line and adv
 thisisckm release new 0.1.0
 thisisckm release alpha
 ```
+
+Each release command uses a branch named for the exact release version, such as `release/v0.1.0-alpha.1`, promotes staged changelog entries into a versioned `CHANGELOG.md` section such as `## [0.1.0-alpha.1] - 2026-06-30`, and clears the staged entry files.
 
 The release branch is then stabilized through the prerelease stages:
 
