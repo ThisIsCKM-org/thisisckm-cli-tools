@@ -33,7 +33,7 @@ func printHelp() {
 	fmt.Println()
 	fmt.Println("Usage:")
 	fmt.Println("  thisisckm [--help] [--version]")
-	fmt.Println("  thisisckm release <init|new|alpha|beta|rc|final> [version]")
+	fmt.Println("  thisisckm release <init|new|alpha|beta|rc|final|sync-develop> [version]")
 }
 
 func runRelease(args []string) error {
@@ -65,6 +65,11 @@ func runRelease(args []string) error {
 		return workspace.Advance(release.ChannelRC)
 	case "final":
 		return workspace.Finalize()
+	case "sync-develop":
+		if len(args) != 1 {
+			return fmt.Errorf("usage: thisisckm release sync-develop")
+		}
+		return workspace.SyncDevelop()
 	default:
 		return fmt.Errorf("unknown release subcommand %q", args[0])
 	}

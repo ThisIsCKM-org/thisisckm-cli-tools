@@ -6,17 +6,12 @@ func TestStateAdvance(t *testing.T) {
 	s := Seed("0.1.0")
 
 	var err error
-	s, err = s.WithNew("0.1.0")
-	if err != nil {
-		t.Fatalf("new failed: %v", err)
-	}
-	if got, want := s.State, StateInProgress; got != want {
-		t.Fatalf("state = %s, want %s", got, want)
-	}
-
 	s, err = s.Advance(ChannelAlpha)
 	if err != nil {
 		t.Fatalf("alpha failed: %v", err)
+	}
+	if got, want := s.State, StateInProgress; got != want {
+		t.Fatalf("state = %s, want %s", got, want)
 	}
 	if got, want := s.Channel, ChannelAlpha; got != want {
 		t.Fatalf("channel = %s, want %s", got, want)
@@ -61,6 +56,12 @@ func TestStateAdvance(t *testing.T) {
 	}
 	if got, want := s.State, StateReleased; got != want {
 		t.Fatalf("state = %s, want %s", got, want)
+	}
+	if got, want := s.ReleasedVersion, "0.1.0"; got != want {
+		t.Fatalf("releasedVersion = %s, want %s", got, want)
+	}
+	if got, want := s.LastTag, "v0.1.0"; got != want {
+		t.Fatalf("lastTag = %s, want %s", got, want)
 	}
 }
 
