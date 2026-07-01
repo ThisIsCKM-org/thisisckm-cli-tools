@@ -23,10 +23,16 @@ type Workspace struct {
 }
 
 func (w *Workspace) Init(version string) error {
+	if err := w.ensureDevelopSynced(); err != nil {
+		return err
+	}
 	return Initialize(w.Root, version)
 }
 
 func (w *Workspace) New(version string) error {
+	if err := w.ensureDevelopSynced(); err != nil {
+		return err
+	}
 	return w.startNew(version, true)
 }
 
@@ -62,6 +68,9 @@ func (w *Workspace) startNew(version string, openPR bool) error {
 }
 
 func (w *Workspace) Advance(channel Channel) error {
+	if err := w.ensureDevelopSynced(); err != nil {
+		return err
+	}
 	if err := ensureClean(w.Root); err != nil {
 		return err
 	}
@@ -99,6 +108,9 @@ func (w *Workspace) Advance(channel Channel) error {
 }
 
 func (w *Workspace) Finalize() error {
+	if err := w.ensureDevelopSynced(); err != nil {
+		return err
+	}
 	if err := ensureClean(w.Root); err != nil {
 		return err
 	}
@@ -129,6 +141,97 @@ func (w *Workspace) Finalize() error {
 		return err
 	}
 	return openPullRequest(w.Root, branch, "main", next.BaseVersion, false)
+}
+
+func (w *Workspace) SyncDevelop() error {
+	return w.SyncBranches("main", "develop")
+}
+
+func (w *Workspace) SyncBranches(source, target string) error {
+	if source == "" || target == "" {
+		return errors.New("source and target branches are required")
+	}
+	if source == target {
+		return errors.New("source and target branches must be different")
+	}
+	if !isGitRepo(w.Root) {
+		return errors.New("release sync requires a git repository")
+	}
+	if err := ensureFullyClean(w.Root); err != nil {
+		return err
+	}
+	if hasOriginRemote(w.Root) {
+		if err := gitRun(w.Root, "fetch", "origin", source, target); err != nil {
+			return err
+		}
+	}
+	sourceRef := bestBranchRef(w.Root, source)
+	targetRef := bestBranchRef(w.Root, target)
+	if sourceRef == "" || targetRef == "" {
+		return fmt.Errorf("could not find %s or %s branches for sync", source, target)
+	}
+	syncBranch := syncBranchName(source, target)
+	if localBranchExists(w.Root, syncBranch) {
+		if err := gitRun(w.Root, "switch", syncBranch); err != nil {
+			return err
+		}
+		if err := gitRun(w.Root, "merge", "--no-edit", targetRef); err != nil {
+			return err
+		}
+	} else if err := gitRun(w.Root, "switch", "-c", syncBranch, targetRef); err != nil {
+		return err
+	}
+	if err := gitRun(w.Root, "merge", "--no-edit", sourceRef); err != nil {
+		return err
+	}
+	if err := pushBranch(w.Root, syncBranch); err != nil {
+		return err
+	}
+	return openSyncPullRequest(w.Root, syncBranch, target, source)
+}
+
+func (w *Workspace) ensureDevelopSynced() error {
+	return ensureBranchContains(w.Root, "main", "develop")
+}
+
+func ensureBranchContains(root, source, target string) error {
+	if !isGitRepo(root) {
+		return nil
+	}
+	if hasOriginRemote(root) {
+		if err := gitRun(root, "fetch", "origin", source, target); err != nil {
+			return err
+		}
+	}
+	sourceRef := bestBranchRef(root, source)
+	targetRef := bestBranchRef(root, target)
+	if sourceRef == "" || targetRef == "" {
+		return nil
+	}
+	cmd := exec.Command("git", "merge-base", "--is-ancestor", sourceRef, targetRef)
+	cmd.Dir = root
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("%s is out of sync with %s; run `thisisckm release sync-develop` before release commands", target, source)
+	}
+	return nil
+}
+
+func bestBranchRef(root, branch string) string {
+	remoteRef := "refs/remotes/origin/" + branch
+	if gitRefExists(root, remoteRef) {
+		return "origin/" + branch
+	}
+	localRef := "refs/heads/" + branch
+	if gitRefExists(root, localRef) {
+		return branch
+	}
+	return ""
+}
+
+func gitRefExists(root, ref string) bool {
+	cmd := exec.Command("git", "show-ref", "--verify", "--quiet", ref)
+	cmd.Dir = root
+	return cmd.Run() == nil
 }
 
 func loadCurrent(root string) (State, error) {
@@ -168,11 +271,15 @@ func releaseBranchName(version string) string {
 	return fmt.Sprintf("release/v%s", version)
 }
 
+func syncBranchName(source, target string) string {
+	return fmt.Sprintf("sync/%s-into-%s", source, target)
+}
+
 func ensureClean(root string) error {
 	if !isGitRepo(root) {
 		return nil
 	}
-	out, err := gitOutput(root, "status", "--porcelain=v1", "--untracked-files=all")
+	out, err := gitStatus(root)
 	if err != nil {
 		return err
 	}
@@ -189,6 +296,21 @@ func ensureClean(root string) error {
 		}
 	}
 	return nil
+}
+
+func ensureFullyClean(root string) error {
+	out, err := gitStatus(root)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(out) != "" {
+		return errors.New("working tree is dirty; commit or stash changes before syncing branches")
+	}
+	return nil
+}
+
+func gitStatus(root string) (string, error) {
+	return gitOutput(root, "status", "--porcelain=v1", "--untracked-files=all")
 }
 
 func releasePathFromStatus(line string) string {
@@ -264,7 +386,7 @@ func pushBranch(root, branch string) error {
 	if branch == "" {
 		return nil
 	}
-	remoteURL, err := gitOutput(root, "remote", "get-url", "origin")
+	remoteURL, err := originRemoteURL(root)
 	if err != nil {
 		return nil
 	}
@@ -320,6 +442,39 @@ func openPullRequest(root, head, base, version string, draft bool) error {
 	return nil
 }
 
+func openSyncPullRequest(root, head, base, source string) error {
+	if head == "" || base == "" {
+		return nil
+	}
+	remoteURL, err := originRemoteURL(root)
+	if err != nil {
+		return nil
+	}
+	if !looksLikeGitHubRemote(strings.TrimSpace(remoteURL)) {
+		return nil
+	}
+	if !remoteBranchExists(root, "origin", base) {
+		fmt.Printf("sync branch prepared from %s; create or sync %s before opening a PR from %s\n", source, base, head)
+		return nil
+	}
+	if _, err := exec.LookPath("gh"); err != nil {
+		fmt.Printf("sync branch prepared; open a PR from %s into %s\n", head, base)
+		return nil
+	}
+	title := fmt.Sprintf("Sync %s into %s", source, base)
+	body := fmt.Sprintf("## Sync\nMerge `%s` back into `%s` after release metadata updates.\n", source, base)
+	if number, err := existingPullRequestNumber(root, head, base); err != nil {
+		return err
+	} else if number > 0 {
+		return editPullRequest(root, number, title, body)
+	}
+	cmd := exec.Command("gh", "pr", "create", "--base", base, "--head", head, "--title", title, "--body", body)
+	cmd.Dir = root
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
 func existingPullRequestNumber(root, head, base string) (int, error) {
 	cmd := exec.Command("gh", "pr", "list", "--head", head, "--base", base, "--state", "open", "--json", "number", "--limit", "1")
 	cmd.Dir = root
@@ -373,6 +528,15 @@ func remoteBranchExists(root, remote, branch string) bool {
 	cmd.Dir = root
 	out, err := cmd.Output()
 	return err == nil && strings.TrimSpace(string(out)) != ""
+}
+
+func hasOriginRemote(root string) bool {
+	_, err := originRemoteURL(root)
+	return err == nil
+}
+
+func originRemoteURL(root string) (string, error) {
+	return gitOutput(root, "remote", "get-url", "origin")
 }
 
 func looksLikeGitHubRemote(remote string) bool {

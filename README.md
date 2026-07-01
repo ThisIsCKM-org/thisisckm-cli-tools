@@ -19,6 +19,7 @@ The first tool is the release CLI.
 - `thisisckm release beta` advances prerelease state.
 - `thisisckm release rc` advances prerelease state.
 - `thisisckm release final` finalizes the release branch and opens the PR to `main`.
+- `thisisckm release sync-develop` prepares a PR to merge `main` back into `develop` after release metadata lands on `main`.
 
 ## Changelog
 
@@ -33,6 +34,8 @@ The first tool is the release CLI.
 3. The release branch is updated through `alpha`, `beta`, `rc`, and `final`.
 4. The CLI opens a PR from `release/*` into `main`.
 5. Tags are cut from `main` after the release PR is merged.
+6. Open a sync PR from `main` back into `develop` with `thisisckm release sync-develop` so release metadata stays current on the integration branch.
+7. Release commands fail when `develop` is behind `main`; run `thisisckm release sync-develop` first.
 
 ## Version Examples
 
@@ -89,6 +92,19 @@ thisisckm release final
 ```
 
 `final` promotes staged changelog entries into `CHANGELOG.md`, marks the version as stable, and opens or updates the release PR into `main`.
+
+
+## Sync Develop After Release
+
+After a release PR is merged into `main`, release metadata such as `version.json` may be newer on `main` than on `develop`. Sync it back before starting more development or another release:
+
+```bash
+thisisckm release sync-develop
+```
+
+This command requires a clean worktree, creates or updates `sync/main-into-develop` from `develop`, merges `main` into that sync branch, pushes the sync branch, and opens or updates a PR into `develop` when the repository has a GitHub `origin` remote.
+
+Release commands such as `init`, `new`, `alpha`, `beta`, `rc`, and `final` check this relationship before making changes. If `main` contains commits that are not reachable from `develop`, the command stops and asks you to run `thisisckm release sync-develop`.
 
 ## Selective Release Example
 

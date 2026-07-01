@@ -133,6 +133,93 @@ func TestInvalidFinalizeDoesNotCreateReleaseBranchOrCommit(t *testing.T) {
 	}
 }
 
+func TestReleaseCommandsRejectOutOfSyncDevelop(t *testing.T) {
+	root := setupGitReleaseRepo(t)
+	runGitForTest(t, root, "branch", "-m", "main")
+	runGitForTest(t, root, "switch", "-c", "develop")
+	runGitForTest(t, root, "switch", "main")
+	state := Seed("0.2.0")
+	state.State = StateInProgress
+	state.Channel = ChannelAlpha
+	state.Counter = 1
+	if err := Save(StateFile(root), state); err != nil {
+		t.Fatalf("save main state: %v", err)
+	}
+	runGitForTest(t, root, "add", "version.json")
+	runGitForTest(t, root, "commit", "-m", "release metadata on main")
+	runGitForTest(t, root, "switch", "develop")
+
+	workspace := Workspace{Root: root}
+	err := workspace.Advance(ChannelAlpha)
+	if err == nil {
+		t.Fatal("expected release command to fail when develop is behind main")
+	}
+	if !strings.Contains(err.Error(), "sync-develop") {
+		t.Fatalf("error = %q, want sync-develop guidance", err)
+	}
+	if got, want := currentGitBranch(t, root), "develop"; got != want {
+		t.Fatalf("branch changed to %q, want %q", got, want)
+	}
+	if releaseBranchExists(t, root, "release/v0.1.0-alpha.1") {
+		t.Fatal("release branch was created even though develop is out of sync")
+	}
+}
+
+func TestSyncDevelopCreatesPullRequestBranch(t *testing.T) {
+	root := setupGitReleaseRepo(t)
+	runGitForTest(t, root, "branch", "-m", "main")
+	runGitForTest(t, root, "switch", "-c", "develop")
+	developCommit := gitOutputForTest(t, root, "rev-parse", "develop")
+	runGitForTest(t, root, "switch", "main")
+	state := Seed("0.2.0")
+	state.State = StateInProgress
+	state.Channel = ChannelAlpha
+	state.Counter = 1
+	if err := Save(StateFile(root), state); err != nil {
+		t.Fatalf("save main state: %v", err)
+	}
+	runGitForTest(t, root, "add", "version.json")
+	runGitForTest(t, root, "commit", "-m", "release metadata on main")
+
+	workspace := Workspace{Root: root}
+	if err := workspace.SyncDevelop(); err != nil {
+		t.Fatalf("sync develop: %v", err)
+	}
+	if got, want := currentGitBranch(t, root), "sync/main-into-develop"; got != want {
+		t.Fatalf("branch = %q, want %q", got, want)
+	}
+	if got := gitOutputForTest(t, root, "rev-parse", "develop"); got != developCommit {
+		t.Fatalf("develop moved to %q, want %q", got, developCommit)
+	}
+	synced, err := Load(StateFile(root))
+	if err != nil {
+		t.Fatalf("load synced state: %v", err)
+	}
+	if got, want := synced.BaseVersion, "0.2.0"; got != want {
+		t.Fatalf("baseVersion = %q, want %q", got, want)
+	}
+	if got, want := synced.Channel, ChannelAlpha; got != want {
+		t.Fatalf("channel = %q, want %q", got, want)
+	}
+}
+
+func TestSyncDevelopRejectsDirtyWorktree(t *testing.T) {
+	root := setupGitReleaseRepo(t)
+	runGitForTest(t, root, "branch", "-m", "main")
+	runGitForTest(t, root, "switch", "-c", "develop")
+	if err := os.WriteFile(filepath.Join(root, "notes.txt"), []byte("dirty\n"), 0o644); err != nil {
+		t.Fatalf("write dirty file: %v", err)
+	}
+
+	workspace := Workspace{Root: root}
+	if err := workspace.SyncDevelop(); err == nil {
+		t.Fatal("expected sync to fail with dirty worktree")
+	}
+	if got, want := currentGitBranch(t, root), "develop"; got != want {
+		t.Fatalf("branch changed to %q, want %q", got, want)
+	}
+}
+
 func setupGitReleaseRepo(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
