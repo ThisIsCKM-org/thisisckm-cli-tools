@@ -64,7 +64,7 @@ func (w *Workspace) startNew(version string, openPR bool) error {
 	if !openPR {
 		return nil
 	}
-	return openPullRequest(w.Root, branch, "main", version, true)
+	return openPullRequest(w.Root, branch, resolveBranchName(w.Root, "main"), version, true)
 }
 
 func (w *Workspace) Advance(channel Channel) error {
@@ -104,7 +104,7 @@ func (w *Workspace) Advance(channel Channel) error {
 	if err := pushBranch(w.Root, branch); err != nil {
 		return err
 	}
-	return openPullRequest(w.Root, branch, "main", version, true)
+	return openPullRequest(w.Root, branch, resolveBranchName(w.Root, "main"), version, true)
 }
 
 func (w *Workspace) Finalize() error {
@@ -140,7 +140,7 @@ func (w *Workspace) Finalize() error {
 	if err := pushBranch(w.Root, branch); err != nil {
 		return err
 	}
-	return openPullRequest(w.Root, branch, "main", next.BaseVersion, false)
+	return openPullRequest(w.Root, branch, resolveBranchName(w.Root, "main"), next.BaseVersion, false)
 }
 
 func (w *Workspace) SyncDevelop() error {
@@ -160,17 +160,18 @@ func (w *Workspace) SyncBranches(source, target string) error {
 	if err := ensureFullyClean(w.Root); err != nil {
 		return err
 	}
+	sourceName, targetName := branchNamesForRoles(w.Root, source, target)
 	if hasOriginRemote(w.Root) {
-		if err := gitRun(w.Root, "fetch", "origin", source, target); err != nil {
+		if err := gitRun(w.Root, "fetch", "origin", sourceName, targetName); err != nil {
 			return err
 		}
 	}
 	sourceRef := bestBranchRef(w.Root, source)
 	targetRef := bestBranchRef(w.Root, target)
 	if sourceRef == "" || targetRef == "" {
-		return fmt.Errorf("could not find %s or %s branches for sync", source, target)
+		return fmt.Errorf("could not find %s or %s branches for sync", sourceName, targetName)
 	}
-	syncBranch := syncBranchName(source, target)
+	syncBranch := syncBranchName(sourceName, targetName)
 	if localBranchExists(w.Root, syncBranch) {
 		if err := gitRun(w.Root, "switch", syncBranch); err != nil {
 			return err
@@ -187,7 +188,7 @@ func (w *Workspace) SyncBranches(source, target string) error {
 	if err := pushBranch(w.Root, syncBranch); err != nil {
 		return err
 	}
-	return openSyncPullRequest(w.Root, syncBranch, target, source)
+	return openSyncPullRequest(w.Root, syncBranch, targetName, sourceName)
 }
 
 func (w *Workspace) ensureDevelopSynced() error {
@@ -198,8 +199,9 @@ func ensureBranchContains(root, source, target string) error {
 	if !isGitRepo(root) {
 		return nil
 	}
+	sourceName, targetName := branchNamesForRoles(root, source, target)
 	if hasOriginRemote(root) {
-		if err := gitRun(root, "fetch", "origin", source, target); err != nil {
+		if err := gitRun(root, "fetch", "origin", sourceName, targetName); err != nil {
 			return err
 		}
 	}
@@ -211,19 +213,24 @@ func ensureBranchContains(root, source, target string) error {
 	cmd := exec.Command("git", "merge-base", "--is-ancestor", sourceRef, targetRef)
 	cmd.Dir = root
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("%s is out of sync with %s; run `thisisckm release sync-develop` before release commands", target, source)
+		return fmt.Errorf("%s is out of sync with %s; run `thisisckm release sync-develop` before release commands", targetName, sourceName)
 	}
 	return nil
 }
 
 func bestBranchRef(root, branch string) string {
-	remoteRef := "refs/remotes/origin/" + branch
-	if gitRefExists(root, remoteRef) {
-		return "origin/" + branch
-	}
-	localRef := "refs/heads/" + branch
-	if gitRefExists(root, localRef) {
-		return branch
+	for _, candidate := range branchCandidates(root, branch) {
+		if candidate == "" {
+			continue
+		}
+		remoteRef := "refs/remotes/origin/" + candidate
+		if gitRefExists(root, remoteRef) {
+			return "origin/" + candidate
+		}
+		localRef := "refs/heads/" + candidate
+		if gitRefExists(root, localRef) {
+			return candidate
+		}
 	}
 	return ""
 }
@@ -235,25 +242,25 @@ func gitRefExists(root, ref string) bool {
 }
 
 func loadCurrent(root string) (State, error) {
-	statePath := StateFile(root)
-	if _, err := os.Stat(statePath); err != nil {
+	state, _, err := loadStateFile(root)
+	if err != nil {
 		if os.IsNotExist(err) {
 			return State{}, errors.New("release metadata not initialized; run `thisisckm release init <version>` first")
 		}
 		return State{}, err
 	}
-	return Load(statePath)
+	return state, nil
 }
 
 func loadOrSeed(root, version string) (State, error) {
-	statePath := StateFile(root)
-	if _, err := os.Stat(statePath); err != nil {
+	state, _, err := loadStateFile(root)
+	if err != nil {
 		if os.IsNotExist(err) {
 			return Seed(version), nil
 		}
 		return State{}, err
 	}
-	return Load(statePath)
+	return state, nil
 }
 
 func promoteStagedChangelog(root, version string) error {
@@ -322,7 +329,7 @@ func releasePathFromStatus(line string) string {
 
 func isControlledReleasePath(path string) bool {
 	switch path {
-	case "version.json", "CHANGELOG.md":
+	case "release.config.json", "release.json", "CHANGELOG.md":
 		return true
 	}
 	return strings.HasPrefix(path, "changelogs/")
@@ -330,6 +337,11 @@ func isControlledReleasePath(path string) bool {
 
 func isGitRepo(root string) bool {
 	_, err := os.Stat(filepathJoin(root, ".git"))
+	return err == nil
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
 	return err == nil
 }
 
@@ -373,7 +385,12 @@ func commitAll(root, message string) error {
 	if err := gitRun(root, "config", "user.email", "release@thisisckm.local"); err != nil {
 		return err
 	}
-	if err := gitRun(root, "add", "-A", "--", "version.json", "CHANGELOG.md", "changelogs"); err != nil {
+	args := []string{"add", "-A", "--"}
+	if fileExists(filepathJoin(root, "release.config.json")) {
+		args = append(args, "release.config.json")
+	}
+	args = append(args, "release.json", "CHANGELOG.md", "changelogs")
+	if err := gitRun(root, args...); err != nil {
 		return err
 	}
 	if err := gitRun(root, "commit", "-m", message); err != nil {

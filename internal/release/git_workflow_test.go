@@ -14,6 +14,44 @@ func TestReleaseBranchNameUsesBaseVersion(t *testing.T) {
 	}
 }
 
+func TestReleaseCommandsHonorConfiguredBranchNames(t *testing.T) {
+	root := setupGitReleaseRepo(t)
+	cfg := []byte(`{"branches":{"develop":"dev","main":"master"}}
+`)
+	if err := os.WriteFile(filepath.Join(root, "release.config.json"), cfg, 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	runGitForTest(t, root, "branch", "-m", "master")
+	runGitForTest(t, root, "switch", "-c", "dev")
+
+	workspace := Workspace{Root: root}
+	if err := workspace.Advance(ChannelAlpha); err != nil {
+		t.Fatalf("alpha release with configured branch names: %v", err)
+	}
+	if got, want := currentGitBranch(t, root), "release/v0.1.0-alpha.1"; got != want {
+		t.Fatalf("branch = %q, want %q", got, want)
+	}
+}
+
+func TestReleaseCommandsWorkWithoutConfigFile(t *testing.T) {
+	root := setupGitReleaseRepo(t)
+	if _, err := os.Stat(filepath.Join(root, "release.config.json")); !os.IsNotExist(err) {
+		t.Fatalf("release.config.json should not exist: %v", err)
+	}
+	if got := gitOutputForTest(t, root, "branch", "--show-current"); got != "main" {
+		runGitForTest(t, root, "branch", "-m", "main")
+	}
+	runGitForTest(t, root, "switch", "-c", "develop")
+
+	workspace := Workspace{Root: root}
+	if err := workspace.Advance(ChannelAlpha); err != nil {
+		t.Fatalf("alpha release without config: %v", err)
+	}
+	if got, want := currentGitBranch(t, root), "release/v0.1.0-alpha.1"; got != want {
+		t.Fatalf("branch = %q, want %q", got, want)
+	}
+}
+
 func TestNewCreatesDocumentedReleaseBranch(t *testing.T) {
 	root := setupGitReleaseRepo(t)
 	workspace := Workspace{Root: root}
@@ -145,7 +183,7 @@ func TestReleaseCommandsRejectOutOfSyncDevelop(t *testing.T) {
 	if err := Save(StateFile(root), state); err != nil {
 		t.Fatalf("save main state: %v", err)
 	}
-	runGitForTest(t, root, "add", "version.json")
+	runGitForTest(t, root, "add", "release.json")
 	runGitForTest(t, root, "commit", "-m", "release metadata on main")
 	runGitForTest(t, root, "switch", "develop")
 
@@ -178,7 +216,7 @@ func TestSyncDevelopCreatesPullRequestBranch(t *testing.T) {
 	if err := Save(StateFile(root), state); err != nil {
 		t.Fatalf("save main state: %v", err)
 	}
-	runGitForTest(t, root, "add", "version.json")
+	runGitForTest(t, root, "add", "release.json")
 	runGitForTest(t, root, "commit", "-m", "release metadata on main")
 
 	workspace := Workspace{Root: root}

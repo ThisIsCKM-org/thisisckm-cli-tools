@@ -2,6 +2,9 @@ package cli
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"thisisckm-cli-tools/internal/release"
 )
@@ -23,6 +26,8 @@ func Run(args []string) error {
 		return nil
 	case "release":
 		return runRelease(args[1:])
+	case "changelog":
+		return runChangelog(args[1:])
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
 	}
@@ -33,7 +38,8 @@ func printHelp() {
 	fmt.Println()
 	fmt.Println("Usage:")
 	fmt.Println("  thisisckm [--help] [--version]")
-	fmt.Println("  thisisckm release <init|new|alpha|beta|rc|final|sync-develop> [version]")
+	fmt.Println("  thisisckm release <init|config|new|alpha|beta|rc|final|sync-develop> [version]")
+	fmt.Println("  thisisckm changelog <bug|feature|added|change|removed> -m <message>")
 }
 
 func runRelease(args []string) error {
@@ -52,6 +58,11 @@ func runRelease(args []string) error {
 			return fmt.Errorf("usage: thisisckm release init <version>")
 		}
 		return workspace.Init(args[1])
+	case "config":
+		if len(args) != 1 {
+			return fmt.Errorf("usage: thisisckm release config")
+		}
+		return release.Configure(workspace.Root, os.Stdin, os.Stdout)
 	case "new":
 		if len(args) != 2 {
 			return fmt.Errorf("usage: thisisckm release new <version>")
@@ -73,4 +84,25 @@ func runRelease(args []string) error {
 	default:
 		return fmt.Errorf("unknown release subcommand %q", args[0])
 	}
+}
+
+func runChangelog(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: thisisckm changelog <bug|feature|added|change|removed> -m <message>")
+	}
+	if len(args) < 3 || args[1] != "-m" {
+		return fmt.Errorf("usage: thisisckm changelog <bug|feature|added|change|removed> -m <message>")
+	}
+	kind := strings.ToLower(args[0])
+	message := strings.Join(args[2:], " ")
+	workspace, err := release.NewWorkspaceFromCWD()
+	if err != nil {
+		return err
+	}
+	path, err := release.CreateStagedChangelogEntry(workspace.Root, kind, message)
+	if err != nil {
+		return err
+	}
+	fmt.Println(filepath.Base(path))
+	return nil
 }
