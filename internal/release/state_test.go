@@ -1,6 +1,10 @@
 package release
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestStateAdvance(t *testing.T) {
 	s := Seed("0.1.0")
@@ -71,5 +75,60 @@ func TestNewRejectsInProgress(t *testing.T) {
 	s.Channel = ChannelAlpha
 	if _, err := s.WithNew("0.2.0"); err == nil {
 		t.Fatal("expected new to fail while release is in progress")
+	}
+}
+
+func TestLoadStateFileFallsBackToLegacyVersionFile(t *testing.T) {
+	root := t.TempDir()
+	legacy := Seed("0.1.0")
+	legacy.State = StateInProgress
+	legacy.Channel = ChannelAlpha
+	legacy.Counter = 2
+	if err := Save(LegacyStateFile(root), legacy); err != nil {
+		t.Fatalf("save legacy state: %v", err)
+	}
+	state, path, err := loadStateFile(root)
+	if err != nil {
+		t.Fatalf("load state: %v", err)
+	}
+	if got, want := path, LegacyStateFile(root); got != want {
+		t.Fatalf("state path = %q, want %q", got, want)
+	}
+	if got, want := state.Channel, ChannelAlpha; got != want {
+		t.Fatalf("channel = %s, want %s", got, want)
+	}
+	if got, want := state.Counter, 2; got != want {
+		t.Fatalf("counter = %d, want %d", got, want)
+	}
+}
+
+func TestEnsureReleaseFileMigratesLegacyVersionFile(t *testing.T) {
+	root := t.TempDir()
+	legacy := Seed("0.1.0")
+	legacy.State = StateInProgress
+	legacy.Channel = ChannelAlpha
+	legacy.Counter = 2
+	if err := Save(LegacyStateFile(root), legacy); err != nil {
+		t.Fatalf("save legacy state: %v", err)
+	}
+	if err := EnsureReleaseFile(root, "0.1.0"); err != nil {
+		t.Fatalf("ensure release file: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "release.json"))
+	if err != nil {
+		t.Fatalf("read migrated release.json: %v", err)
+	}
+	if len(data) == 0 {
+		t.Fatal("expected migrated release.json content")
+	}
+	state, err := Load(StateFile(root))
+	if err != nil {
+		t.Fatalf("load migrated release.json: %v", err)
+	}
+	if got, want := state.Channel, ChannelAlpha; got != want {
+		t.Fatalf("channel = %s, want %s", got, want)
+	}
+	if got, want := state.Counter, 2; got != want {
+		t.Fatalf("counter = %d, want %d", got, want)
 	}
 }

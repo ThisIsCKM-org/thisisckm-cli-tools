@@ -31,15 +31,14 @@ func EnsureChangelog(root string) error {
 	return os.WriteFile(path, []byte(changelogScaffold), 0o644)
 }
 
-func EnsureVersionFile(root string, version string) error {
+func EnsureReleaseFile(root string, version string) error {
 	path := StateFile(root)
-	if _, err := os.Stat(path); err == nil {
-		current, loadErr := Load(path)
-		if loadErr != nil {
-			return loadErr
-		}
+	if current, existingPath, err := loadStateFile(root); err == nil {
 		if current.BaseVersion != version {
-			return fmt.Errorf("version.json already exists with base version %s", current.BaseVersion)
+			return fmt.Errorf("release.json already exists with base version %s", current.BaseVersion)
+		}
+		if existingPath != path {
+			return Save(path, current)
 		}
 		return nil
 	} else if !os.IsNotExist(err) {
@@ -49,7 +48,7 @@ func EnsureVersionFile(root string, version string) error {
 }
 
 func Initialize(root, version string) error {
-	if err := EnsureVersionFile(root, version); err != nil {
+	if err := EnsureReleaseFile(root, version); err != nil {
 		return err
 	}
 	if err := EnsureChangelog(root); err != nil {
@@ -141,6 +140,74 @@ func ClearStagedEntries(root string) error {
 		}
 	}
 	return nil
+}
+
+func CreateStagedChangelogEntry(root, kind, message string) (string, error) {
+	if err := EnsureChangelog(root); err != nil {
+		return "", err
+	}
+	if err := EnsureChangelogInbox(root); err != nil {
+		return "", err
+	}
+	section, err := changelogSectionForKind(kind)
+	if err != nil {
+		return "", err
+	}
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return "", fmt.Errorf("changelog message is required")
+	}
+	date := time.Now().Format("2006-01-02")
+	slug := changelogSlug(message)
+	baseName := fmt.Sprintf("%s-%s-%s.md", date, kind, slug)
+	path := filepath.Join(root, "changelogs", baseName)
+	for suffix := 1; ; suffix++ {
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			break
+		}
+		baseName = fmt.Sprintf("%s-%s-%s-%d.md", date, kind, slug, suffix)
+		path = filepath.Join(root, "changelogs", baseName)
+	}
+	content := fmt.Sprintf("### %s\n- %s\n", section, message)
+	return path, os.WriteFile(path, []byte(content), 0o644)
+}
+
+func changelogSectionForKind(kind string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "bug", "fix", "fixed":
+		return "Fixed", nil
+	case "feature", "feat", "add", "added":
+		return "Added", nil
+	case "change", "changed", "update", "updated":
+		return "Changed", nil
+	case "removed", "remove", "delete", "deleted":
+		return "Removed", nil
+	default:
+		return "", fmt.Errorf("unknown changelog kind %q", kind)
+	}
+}
+
+func changelogSlug(message string) string {
+	message = strings.ToLower(message)
+	var builder strings.Builder
+	lastDash := false
+	for _, r := range message {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			builder.WriteRune(r)
+			lastDash = false
+		case r == ' ' || r == '-' || r == '_' || r == '/' || r == '.':
+			if !lastDash && builder.Len() > 0 {
+				builder.WriteByte('-')
+				lastDash = true
+			}
+		}
+	}
+	slug := strings.Trim(builder.String(), "-")
+	if slug == "" {
+		return "entry"
+	}
+	return slug
 }
 
 func PromoteChangelog(root, version string, items []string) error {

@@ -18,11 +18,11 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26.4"
-      - name: Create tag from version.json
+      - name: Create tag from release.json
         run: |
           STATE=$(python - <<'PY'
 import json
-with open("version.json", "r", encoding="utf-8") as fh:
+with open("release.json", "r", encoding="utf-8") as fh:
     state = json.load(fh)
 print(state["state"])
 PY
@@ -33,7 +33,7 @@ PY
           fi
           VERSION=$(python - <<'PY'
 import json
-with open("version.json", "r", encoding="utf-8") as fh:
+with open("release.json", "r", encoding="utf-8") as fh:
     state = json.load(fh)
 print(state["releasedVersion"] or state["baseVersion"])
 PY

@@ -6,24 +6,31 @@ The first tool is the release CLI.
 
 ## Branch Flow
 
-- `develop` is the active integration branch.
+- `release.config.json` defines the branch names used by the release workflow.
+- `thisisckm release config` asks which branch is the development branch and which branch is the main branch, then stores those answers as the saved branch names.
+- If `release.config.json` already exists, `thisisckm release config` uses the saved branch names as the defaults so rerunning the command updates the file instead of starting over.
+- If `release.config.json` is missing, the CLI falls back to the default `develop` and `main` branch names.
+- `develop` is the integration branch role.
+- `main` is the release-ready branch role.
 - `release/*` branches are created for release preparation.
-- `main` is the protected release-ready branch.
-- release tags are cut from `main` only.
+- release tags are cut from the resolved main branch only.
 
 ## Commands
 
-- `thisisckm release init <version>` bootstraps `version.json` and `CHANGELOG.md`.
+- `thisisckm release init <version>` bootstraps `release.json` and `CHANGELOG.md` without prompting or touching `release.config.json`.
+- `thisisckm release config` updates `release.config.json`.
 - `thisisckm release new <version>` starts a release line and creates `release/v<version>`.
 - `thisisckm release alpha` advances prerelease state.
 - `thisisckm release beta` advances prerelease state.
 - `thisisckm release rc` advances prerelease state.
-- `thisisckm release final` finalizes the release branch and opens the PR to `main`.
-- `thisisckm release sync-develop` prepares a PR to merge `main` back into `develop` after release metadata lands on `main`.
+- `thisisckm release final` finalizes the release branch and opens the PR to the resolved main branch.
+- `thisisckm release sync-develop` prepares a PR to merge the resolved main branch back into the resolved develop branch after release metadata lands.
+- `thisisckm changelog <bug|feature|added|change|removed> -m <message>` stages a new changelog entry under `changelogs/`.
 
 ## Changelog
 
 - Store in-progress entries under `changelogs/` as one file per change log item.
+- Use `thisisckm changelog bug -m "..."` for fixes and `thisisckm changelog feature -m "..."` for new work.
 - Consolidate staged entries into `CHANGELOG.md` whenever `alpha`, `beta`, `rc`, or `final` cuts a release version.
 - Keep `CHANGELOG.md` as the published release history.
 
@@ -96,7 +103,7 @@ thisisckm release final
 
 ## Sync Develop After Release
 
-After a release PR is merged into `main`, release metadata such as `version.json` may be newer on `main` than on `develop`. Sync it back before starting more development or another release:
+After a release PR is merged into `main`, release metadata such as `release.json` may be newer on `main` than on `develop`. Sync it back before starting more development or another release:
 
 ```bash
 thisisckm release sync-develop
@@ -104,7 +111,7 @@ thisisckm release sync-develop
 
 This command requires a clean worktree, creates or updates `sync/main-into-develop` from `develop`, merges `main` into that sync branch, pushes the sync branch, and opens or updates a PR into `develop` when the repository has a GitHub `origin` remote.
 
-Release commands such as `init`, `new`, `alpha`, `beta`, `rc`, and `final` check this relationship before making changes. If `main` contains commits that are not reachable from `develop`, the command stops and asks you to run `thisisckm release sync-develop`.
+Release commands such as `init`, `new`, `alpha`, `beta`, `rc`, and `final` check this relationship before making changes. If the resolved main branch contains commits that are not reachable from the resolved develop branch, the command stops and asks you to run `thisisckm release sync-develop`.
 
 ## Selective Release Example
 

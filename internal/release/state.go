@@ -275,7 +275,23 @@ func compareInts(a, b int) int {
 }
 
 func StateFile(root string) string {
+	return filepath.Join(root, "release.json")
+}
+
+func LegacyStateFile(root string) string {
 	return filepath.Join(root, "version.json")
+}
+
+func loadStateFile(root string) (State, string, error) {
+	for _, path := range []string{StateFile(root), LegacyStateFile(root)} {
+		if _, err := os.Stat(path); err == nil {
+			state, loadErr := Load(path)
+			return state, path, loadErr
+		} else if !os.IsNotExist(err) {
+			return State{}, "", err
+		}
+	}
+	return State{}, "", os.ErrNotExist
 }
 
 func ChangelogFile(root string) string {
