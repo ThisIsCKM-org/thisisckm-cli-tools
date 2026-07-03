@@ -20,25 +20,25 @@ jobs:
           go-version: "1.26.4"
       - name: Create tag from release.json
         run: |
-          STATE=$(python - <<'PY'
-import json
-with open("release.json", "r", encoding="utf-8") as fh:
-    state = json.load(fh)
-print(state["state"])
-PY
-)
-          if [ "$STATE" != "released" ]; then
+          TAG=$(python - <<'PY'
+          import json
+          with open("release.json", "r", encoding="utf-8") as fh:
+              state = json.load(fh)
+          release_state = state.get("state")
+          channel = state.get("channel")
+          base_version = state.get("baseVersion")
+          counter = int(state.get("counter") or 0)
+          released_version = state.get("releasedVersion") or base_version
+          if release_state == "released":
+              print(f"v{released_version}")
+          elif release_state == "in-progress" and channel in {"alpha", "beta", "rc"} and counter > 0:
+              print(f"v{base_version}-{channel}.{counter}")
+          PY
+          )
+          if [ -z "$TAG" ]; then
             echo "No release tag to create"
             exit 0
           fi
-          VERSION=$(python - <<'PY'
-import json
-with open("release.json", "r", encoding="utf-8") as fh:
-    state = json.load(fh)
-print(state["releasedVersion"] or state["baseVersion"])
-PY
-)
-          TAG="v${VERSION}"
           if git rev-parse "${TAG}" >/dev/null 2>&1; then
             echo "Tag ${TAG} already exists"
             exit 1

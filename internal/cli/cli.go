@@ -127,12 +127,24 @@ func runRelease(args []string) error {
 		}
 		return workspace.New(args[1])
 	case "alpha":
+		if len(args) != 1 {
+			return fmt.Errorf("usage: thisisckm release alpha")
+		}
 		return workspace.Advance(release.ChannelAlpha)
 	case "beta":
+		if len(args) != 1 {
+			return fmt.Errorf("usage: thisisckm release beta")
+		}
 		return workspace.Advance(release.ChannelBeta)
 	case "rc":
+		if len(args) != 1 {
+			return fmt.Errorf("usage: thisisckm release rc")
+		}
 		return workspace.Advance(release.ChannelRC)
 	case "final":
+		if len(args) != 1 {
+			return fmt.Errorf("usage: thisisckm release final")
+		}
 		return workspace.Finalize()
 	case "sync-develop":
 		if len(args) != 1 {

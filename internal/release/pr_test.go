@@ -50,6 +50,36 @@ func TestUnreleasedChangelogExtractsCurrentSection(t *testing.T) {
 	}
 }
 
+func TestVersionedChangelogExtractsRequestedRelease(t *testing.T) {
+	root := t.TempDir()
+	content := `# Changelog
+
+## Unreleased
+### Added
+
+## [0.1.0-alpha.1] - 2026-06-30
+### Added
+- Documented alpha release notes.
+
+## [0.0.1] - 2026-01-01
+### Added
+- Previous release.
+`
+	if err := os.WriteFile(ChangelogFile(root), []byte(content), 0o644); err != nil {
+		t.Fatalf("write changelog: %v", err)
+	}
+	got, err := VersionedChangelog(root, "0.1.0-alpha.1")
+	if err != nil {
+		t.Fatalf("extract versioned changelog: %v", err)
+	}
+	if !strings.Contains(got, "## [0.1.0-alpha.1]") || !strings.Contains(got, "Documented alpha release notes") {
+		t.Fatalf("versioned section missing expected content: %q", got)
+	}
+	if strings.Contains(got, "Previous release") {
+		t.Fatalf("versioned section included old release: %q", got)
+	}
+}
+
 func TestReleasePullRequestBodyIncludesUnreleasedChangelog(t *testing.T) {
 	root := t.TempDir()
 	content := `# Changelog
@@ -67,5 +97,28 @@ func TestReleasePullRequestBodyIncludesUnreleasedChangelog(t *testing.T) {
 	}
 	if !strings.Contains(body, "## Changelog") || !strings.Contains(body, "Documented alpha release notes") {
 		t.Fatalf("body missing unreleased changelog: %q", body)
+	}
+}
+
+func TestReleasePullRequestBodyPrefersVersionedChangelog(t *testing.T) {
+	root := t.TempDir()
+	content := `# Changelog
+
+## Unreleased
+### Added
+
+## [0.1.0-alpha.1] - 2026-06-30
+### Added
+- Promoted alpha release notes.
+`
+	if err := os.WriteFile(ChangelogFile(root), []byte(content), 0o644); err != nil {
+		t.Fatalf("write changelog: %v", err)
+	}
+	body := releasePullRequestBody(root, "0.1.0-alpha.1")
+	if !strings.Contains(body, "Promoted alpha release notes") {
+		t.Fatalf("body missing promoted changelog: %q", body)
+	}
+	if strings.Contains(body, "No unreleased changelog entries found.") {
+		t.Fatalf("body fell back to empty unreleased changelog: %q", body)
 	}
 }
