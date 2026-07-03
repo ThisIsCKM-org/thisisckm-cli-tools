@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"thisisckm-cli-tools/internal/release"
+	"thisisckm-cli-tools/skills"
 )
 
 const version = "0.1.0"
@@ -28,6 +29,8 @@ func Run(args []string) error {
 		return runRelease(args[1:])
 	case "changelog":
 		return runChangelog(args[1:])
+	case "add-skills":
+		return runAddSkills(args[1:])
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
 	}
@@ -38,8 +41,63 @@ func printHelp() {
 	fmt.Println()
 	fmt.Println("Usage:")
 	fmt.Println("  thisisckm [--help] [--version]")
+	fmt.Println("  thisisckm add-skills <codex|claude|cursor> [--dry-run] [--force]")
 	fmt.Println("  thisisckm release <init|config|new|alpha|beta|rc|final|sync-develop> [version]")
 	fmt.Println("  thisisckm changelog <bug|feature|added|change|removed> -m <message>")
+}
+
+func runAddSkills(args []string) error {
+	agent, opts, err := parseAddSkillsArgs(args)
+	if err != nil {
+		return err
+	}
+	actions, err := skills.Install(agent, opts)
+	if err != nil {
+		return err
+	}
+	for _, action := range actions {
+		if action.Skipped {
+			fmt.Printf("skipped %s -> %s\n", action.Skill, action.Destination)
+			continue
+		}
+		if opts.DryRun {
+			fmt.Printf("would install %s -> %s\n", action.Skill, action.Destination)
+			continue
+		}
+		fmt.Printf("installed %s -> %s\n", action.Skill, action.Destination)
+	}
+	return nil
+}
+
+func parseAddSkillsArgs(args []string) (skills.Agent, skills.Options, error) {
+	var agent string
+	opts := skills.Options{}
+	for _, arg := range args {
+		switch arg {
+		case "--dry-run", "-n":
+			opts.DryRun = true
+		case "--force", "-f":
+			opts.Force = true
+		case "":
+			continue
+		default:
+			if strings.HasPrefix(arg, "-") {
+				return "", skills.Options{}, fmt.Errorf("unknown flag %q", arg)
+			}
+			if agent != "" {
+				return "", skills.Options{}, fmt.Errorf("usage: thisisckm add-skills <codex|claude|cursor> [--dry-run] [--force]")
+			}
+			agent = arg
+		}
+	}
+	if agent == "" {
+		return "", skills.Options{}, fmt.Errorf("usage: thisisckm add-skills <codex|claude|cursor> [--dry-run] [--force]")
+	}
+	parsed, err := skills.ParseAgent(agent)
+	if err != nil {
+		return "", skills.Options{}, err
+	}
+	return parsed, opts, nil
 }
 
 func runRelease(args []string) error {
