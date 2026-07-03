@@ -281,6 +281,26 @@ func UnreleasedChangelog(root string) (string, error) {
 	return strings.TrimSpace(section), nil
 }
 
+func VersionedChangelog(root, version string) (string, error) {
+	path := ChangelogFile(root)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	content := string(data)
+	headingPrefix := fmt.Sprintf("## [%s] - ", version)
+	start := strings.Index(content, headingPrefix)
+	if start == -1 {
+		return "", fmt.Errorf("missing changelog section for %s", version)
+	}
+	section := content[start:]
+	searchStart := len(headingPrefix)
+	if next := strings.Index(section[searchStart:], "\n## "); next != -1 {
+		section = section[:searchStart+next]
+	}
+	return strings.TrimSpace(section), nil
+}
+
 func AppendReleaseNote(root, line string) error {
 	path := ChangelogFile(root)
 	data, err := os.ReadFile(path)

@@ -133,6 +133,31 @@ func TestRunReleaseConfigCreatesConfig(t *testing.T) {
 	}
 }
 
+func TestRunReleaseStageCommandsRejectExtraArgs(t *testing.T) {
+	root := t.TempDir()
+	oldwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldwd) })
+
+	for _, stage := range []string{"alpha", "beta", "rc", "final"} {
+		t.Run(stage, func(t *testing.T) {
+			err := runRelease([]string{stage, "0.2.0"})
+			if err == nil {
+				t.Fatal("expected extra args to fail")
+			}
+			want := "usage: thisisckm release " + stage
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("error = %q, want %q", err, want)
+			}
+		})
+	}
+}
+
 func TestRunAddSkillsInstallsCodexSkills(t *testing.T) {
 	root := fixtureRepo(t)
 	home := t.TempDir()

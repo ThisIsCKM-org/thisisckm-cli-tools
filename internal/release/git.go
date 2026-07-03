@@ -533,11 +533,14 @@ func releasePullRequestTitle(version string) string {
 }
 
 func releasePullRequestBody(root, version string) string {
-	unreleased, err := UnreleasedChangelog(root)
-	if err != nil || strings.TrimSpace(unreleased) == "" {
-		unreleased = "No unreleased changelog entries found."
+	changelog, err := VersionedChangelog(root, version)
+	if err != nil || strings.TrimSpace(changelog) == "" {
+		changelog, err = UnreleasedChangelog(root)
 	}
-	return fmt.Sprintf("## Release\n%s\n\n## Changelog\n%s\n", version, strings.TrimSpace(unreleased))
+	if err != nil || strings.TrimSpace(changelog) == "" {
+		changelog = "No changelog entries found."
+	}
+	return fmt.Sprintf("## Release\n%s\n\n## Changelog\n%s\n", version, strings.TrimSpace(changelog))
 }
 
 func remoteBranchExists(root, remote, branch string) bool {
