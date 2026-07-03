@@ -4,6 +4,33 @@
 
 The first tool is the release CLI.
 
+## Agent Skills
+
+Install the repo's bundled coding-agent skills with:
+
+```bash
+thisisckm add-skills codex
+thisisckm add-skills claude
+thisisckm add-skills cursor
+```
+
+The package includes the built skills, but they are copied into your local agent locations only when you run `thisisckm add-skills ...`:
+
+```text
+remote package install -> local skill copy
+```
+
+The installer copies the built skills from this repo into the matching agent locations:
+
+- Codex: `~/.codex/skills/`
+- Claude Code: `~/.claude/skills/`
+- Cursor: `~/.cursor/rules/`
+
+The bundled skills currently cover two workflows:
+
+- `prepare-pr` for normal feature and bug pull requests
+- `prepare-release-pr` for release pull requests
+
 ## Branch Flow
 
 - `release.config.json` defines the branch names used by the release workflow.
@@ -17,6 +44,7 @@ The first tool is the release CLI.
 
 ## Commands
 
+- `thisisckm add-skills <codex|claude|cursor>` installs the bundled coding-agent skills into the selected agent's location.
 - `thisisckm release init <version>` bootstraps `release.json` and `CHANGELOG.md` without prompting or touching `release.config.json`.
 - `thisisckm release config` updates `release.config.json`.
 - `thisisckm release new <version>` starts a release line and creates `release/v<version>`.
