@@ -183,14 +183,22 @@ func (s State) Finalize() (State, error) {
 	s.Counter = 0
 	s.State = StateReleased
 	s.ReleasedVersion = s.BaseVersion
+	tag, err := s.ReleaseTag()
+	if err != nil {
+		return State{}, err
+	}
+	s.LastTag = tag
 	return s, nil
 }
 
 func advancePrerelease(s State, target Channel, allowed []Channel) (State, error) {
-	if s.State != StateInProgress {
-		return State{}, errors.New("release line must be in progress")
-	}
 	if !containsChannel(allowed, s.Channel) {
+		if s.State == StatePlanned && target == ChannelAlpha {
+			s.Channel = ChannelAlpha
+			s.Counter = 1
+			s.State = StateInProgress
+			return s, nil
+		}
 		return State{}, fmt.Errorf("%s requires previous prerelease stage", target)
 	}
 	switch target {
@@ -267,7 +275,23 @@ func compareInts(a, b int) int {
 }
 
 func StateFile(root string) string {
+	return filepath.Join(root, "release.json")
+}
+
+func LegacyStateFile(root string) string {
 	return filepath.Join(root, "version.json")
+}
+
+func loadStateFile(root string) (State, string, error) {
+	for _, path := range []string{StateFile(root), LegacyStateFile(root)} {
+		if _, err := os.Stat(path); err == nil {
+			state, loadErr := Load(path)
+			return state, path, loadErr
+		} else if !os.IsNotExist(err) {
+			return State{}, "", err
+		}
+	}
+	return State{}, "", os.ErrNotExist
 }
 
 func ChangelogFile(root string) string {

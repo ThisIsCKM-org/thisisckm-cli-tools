@@ -4,25 +4,63 @@
 
 The first tool is the release CLI.
 
+## Agent Skills
+
+Install the repo's bundled coding-agent skills with:
+
+```bash
+thisisckm add-skills codex
+thisisckm add-skills claude
+thisisckm add-skills cursor
+```
+
+The package includes the built skills, but they are copied into your local agent locations only when you run `thisisckm add-skills ...`:
+
+```text
+remote package install -> local skill copy
+```
+
+The installer copies the built skills from this repo into the matching agent locations:
+
+- Codex: `~/.codex/skills/`
+- Claude Code: `~/.claude/skills/`
+- Cursor: `~/.cursor/rules/`
+
+The bundled skills currently cover two workflows:
+
+- `prepare-pr` for normal feature and bug pull requests
+- `prepare-release-pr` for release pull requests
+
 ## Branch Flow
 
-- `develop` is the active integration branch.
+- `release.config.json` defines the branch names used by the release workflow.
+- `thisisckm release config` asks which branch is the development branch and which branch is the main branch, then stores those answers as the saved branch names.
+- If `release.config.json` already exists, `thisisckm release config` uses the saved branch names as the defaults so rerunning the command updates the file instead of starting over.
+- If `release.config.json` is missing, the CLI falls back to the default `develop` and `main` branch names.
+- `develop` is the integration branch role.
+- `main` is the release-ready branch role.
 - `release/*` branches are created for release preparation.
-- `main` is the protected release-ready branch.
-- release tags are cut from `main` only.
+- release tags are cut from the resolved main branch only.
 
 ## Commands
 
-- `thisisckm release init <version>` bootstraps `version.json` and `CHANGELOG.md`.
+- `thisisckm add-skills <codex|claude|cursor>` installs the bundled coding-agent skills into the selected agent's location.
+- `thisisckm release init <version>` bootstraps `release.json` and `CHANGELOG.md` without prompting or touching `release.config.json`.
+- `thisisckm release config` updates `release.config.json`.
 - `thisisckm release new <version>` starts a release line and creates `release/v<version>`.
 - `thisisckm release alpha` advances prerelease state.
 - `thisisckm release beta` advances prerelease state.
 - `thisisckm release rc` advances prerelease state.
-- `thisisckm release final` finalizes the release branch and opens the PR to `main`.
+- `thisisckm release final` finalizes the release branch and opens the PR to the resolved main branch.
+- `thisisckm release sync-develop` prepares a PR to merge the resolved main branch back into the resolved develop branch after release metadata lands.
+- `thisisckm changelog <bug|feature|added|change|removed> -m <message>` stages a new changelog entry under `changelogs/`.
 
 ## Changelog
 
-Keep release notes under `CHANGELOG.md` with an `Unreleased` section for active work.
+- Store in-progress entries under `changelogs/` as one file per change log item.
+- Use `thisisckm changelog bug -m "..."` for fixes and `thisisckm changelog feature -m "..."` for new work.
+- Consolidate staged entries into `CHANGELOG.md` whenever `alpha`, `beta`, `rc`, or `final` cuts a release version.
+- Keep `CHANGELOG.md` as the published release history.
 
 ## Release Flow
 
@@ -30,4 +68,140 @@ Keep release notes under `CHANGELOG.md` with an `Unreleased` section for active 
 2. A release branch is created with `thisisckm release new <version>`.
 3. The release branch is updated through `alpha`, `beta`, `rc`, and `final`.
 4. The CLI opens a PR from `release/*` into `main`.
-5. GitHub Actions tags the merge commit and publishes the release from the tag.
+5. Tags are cut from `main` after the release PR is merged.
+6. Open a sync PR from `main` back into `develop` with `thisisckm release sync-develop` so release metadata stays current on the integration branch.
+7. Release commands fail when `develop` is behind `main`; run `thisisckm release sync-develop` first.
+
+## Version Examples
+
+For base version `0.1.0`, prerelease versions progress like this:
+
+```text
+0.1.0-alpha.1
+0.1.0-alpha.2
+0.1.0-beta.1
+0.1.0-rc.1
+0.1.0
+```
+
+Git tags use the same version with a `v` prefix:
+
+```text
+v0.1.0-alpha.1
+v0.1.0-beta.1
+v0.1.0-rc.1
+v0.1.0
+```
+
+## Example Release Cycle
+
+Start by initializing release metadata after the project scaffold is ready:
+
+```bash
+thisisckm release init 0.1.0
+```
+
+Feature and bugfix work then happens on short-lived branches and lands in `develop`:
+
+```text
+feature/login-hardening -> develop
+bugfix/session-timeout -> develop
+feature/audit-logging -> develop
+```
+
+When `develop` is ready for the first prerelease, start the release line and advance to alpha:
+
+```bash
+thisisckm release new 0.1.0
+thisisckm release alpha
+```
+
+Each release command uses a branch named for the exact release version, such as `release/v0.1.0-alpha.1`, promotes staged changelog entries into a versioned `CHANGELOG.md` section such as `## [0.1.0-alpha.1] - 2026-06-30`, and clears the staged entry files.
+
+The release branch is then stabilized through the prerelease stages:
+
+```bash
+thisisckm release beta
+thisisckm release rc
+thisisckm release final
+```
+
+`final` promotes staged changelog entries into `CHANGELOG.md`, marks the version as stable, and opens or updates the release PR into `main`.
+
+
+## Sync Develop After Release
+
+After a release PR is merged into `main`, release metadata such as `release.json` may be newer on `main` than on `develop`. Sync it back before starting more development or another release:
+
+```bash
+thisisckm release sync-develop
+```
+
+This command requires a clean worktree, creates or updates `sync/main-into-develop` from `develop`, merges `main` into that sync branch, pushes the sync branch, and opens or updates a PR into `develop` when the repository has a GitHub `origin` remote.
+
+Release commands such as `init`, `new`, `alpha`, `beta`, `rc`, and `final` check this relationship before making changes. If the resolved main branch contains commits that are not reachable from the resolved develop branch, the command stops and asks you to run `thisisckm release sync-develop`.
+
+## Selective Release Example
+
+Sometimes `develop` contains multiple completed phases, but one phase is not ready to ship.
+
+Example: product hardening for version `2.1.0` has five independent phases:
+
+```text
+Phase 1 -> merged into develop
+Phase 2 -> merged into develop, but later found to have a bug
+Phase 3 -> merged into develop
+Phase 4 -> still in progress
+Phase 5 -> still in progress
+```
+
+If Phase 1 and Phase 3 are ready for alpha or beta, but Phase 2 needs more time, do not cut the release from `develop` while the broken Phase 2 code is still present. A release branch created from that state would include Phase 2.
+
+Recommended approach: revert Phase 2 from `develop`, then release Phase 1 and Phase 3.
+
+```bash
+git switch develop
+git revert <phase-2-merge-commit>
+thisisckm release new 2.1.0
+thisisckm release alpha
+```
+
+The alpha version would be:
+
+```text
+2.1.0-alpha.1
+```
+
+After Phase 2 is fixed, merge the fix back into `develop` and continue the release train:
+
+```bash
+thisisckm release beta
+```
+
+That produces:
+
+```text
+2.1.0-beta.1
+```
+
+Alternative approach: build the release branch selectively from the last stable branch and cherry-pick only Phase 1 and Phase 3. This can work for advanced cases, but it requires careful commit tracking and is easier to get wrong than reverting the bad phase from `develop`.
+
+```text
+main -> release/v2.1.0
+Phase 1 commits -> release/v2.1.0
+Phase 3 commits -> release/v2.1.0
+```
+
+Use the selective approach only when reverting from `develop` is not practical.
+
+## Hotfix Example
+
+For urgent production fixes, branch from the stable release branch, then merge the fix back everywhere it is needed:
+
+```text
+main -> hotfix/security-patch -> main
+hotfix/security-patch -> develop
+hotfix/security-patch -> release/v2.1.0, if a release is in progress
+```
+
+Tags should still be cut from `main` after the final release or hotfix merge.
